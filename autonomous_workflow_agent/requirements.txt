@@ -1,0 +1,26 @@
+# Core Framework
+fastapi==0.115.0
+uvicorn[standard]==0.32.0
+pydantic==2.10.0
+pydantic-settings==2.6.0
+
+# Google APIs
+google-api-python-client==2.116.0
+google-auth==2.27.0
+google-auth-oauthlib==1.2.0
+google-auth-httplib2==0.2.0
+
+# OpenAI
+openai==1.10.0
+
+# Scheduling
+APScheduler==3.10.4
+
+# Utilities
+python-dotenv==1.0.0
+aiofiles==23.2.1
+httpx==0.26.0
+
+# Development
+pytest==7.4.4
+pytest-asyncio==0.23.3

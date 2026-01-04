@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Autonomous Workflow Agent</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link
+        href="https://fonts.googleapis.com/css2?family=Montserrat:wght@300;400;500;600;700&family=Playfair+Display:ital,wght@0,400;0,600;0,700;0,800;1,400&display=swap"
+        rel="stylesheet">
+    <link rel="stylesheet" href="/styles.css?v=9">
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script src="/chart.min.js"></script>
+</head>
+
+<body>
+    <div class="container">
+        <!-- Header -->
+        <header class="header">
+            <h1><span class="gold-text-gradient">Autonomous Workflow Agent</span></h1>
+            <p class="subtitle">Effortless Intelligence</p>
+        </header>
+
+        <!-- Trigger Workflow Card -->
+        <div class="card">
+            <h2><span class="gold-text-gradient">Trigger Workflow</span></h2>
+            <form id="workflowForm" class="workflow-form">
+                <div class="form-group">
+                    <label for="maxEmails">Max Emails to Process</label>
+                    <input type="number" id="maxEmails" value="10" min="1" max="100">
+                </div>
+                <div class="form-group">
+                    <label class="checkbox-label">
+                        <input type="checkbox" id="generateReport" checked>
+                        <span>Generate AI Report</span>
+                    </label>
+                </div>
+                <button type="submit" class="btn-primary" id="runWorkflowBtn">Run Workflow</button>
+            </form>
+        </div>
+
+        <!-- Analytics Dashboard -->
+        <div class="card">
+            <div class="card-header">
+                <h2>📊 <span class="gold-text-gradient">Analytics Dashboard</span></h2>
+                <button onclick="loadAnalytics()" class="btn-secondary">Refresh</button>
+            </div>
+            <div class="analytics-grid">
+                <div class="stat-card">
+                    <h3>Total Emails</h3>
+                    <p id="totalEmails" class="stat-value">0</p>
+                </div>
+                <div class="stat-card">
+                    <h3>Success Rate</h3>
+                    <p id="successRate" class="stat-value">0%</p>
+                </div>
+                <div class="stat-card">
+                    <h3>Total Runs</h3>
+                    <p id="totalRuns" class="stat-value">0</p>
+                </div>
+                <div class="stat-card">
+                    <h3>Avg Urgency</h3>
+                    <p id="avgUrgency" class="stat-value">0.0</p>
+                </div>
+            </div>
+            <div class="charts-grid">
+                <div class="chart-container">
+                    <canvas id="categoryChart"></canvas>
+                </div>
+                <div class="chart-container">
+                    <canvas id="sentimentChart"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <!-- Recent Runs -->
+        <div class="card">
+            <div class="card-header">
+                <h2>📋 <span class="gold-text-gradient">Recent Runs</span></h2>
+                <button onclick="loadRuns()" class="btn-secondary">Refresh</button>
+            </div>
+            <div id="runsContainer">
+                <p class="loading">Loading workflow runs...</p>
+            </div>
+        </div>
+
+        <!-- Reports Section -->
+        <div class="card">
+            <div class="card-header">
+                <h2>📄 <span class="gold-text-gradient">Generated Reports</span></h2>
+                <button onclick="loadReports()" class="btn-secondary">Refresh</button>
+            </div>
+            <div id="reportsContainer">
+                <p class="loading">Loading reports...</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal for Run Details -->
+    <div id="runModal" class="modal">
+        <div class="modal-content">
+            <span class="close" onclick="closeModal('runModal')">&times;</span>
+            <h2>Workflow Run Details</h2>
+            <div id="runDetails"></div>
+        </div>
+    </div>
+
+    <!-- Modal for Report Viewer -->
+    <div id="reportModal" class="modal">
+        <div class="modal-content report-modal">
+            <span class="close" onclick="closeModal('reportModal')">&times;</span>
+            <h2 id="reportTitle">Report</h2>
+            <div id="reportContent" class="report-content"></div>
+        </div>
+    </div>
+
+    <script src="/app.js?v=11"></script>
+</body>
+
+</html>

@@ -1,0 +1,294 @@
+# ============================================================================
+# SENSITIVE & SECURITY - CRITICAL FILES
+# ============================================================================
+
+# Environment variables (API keys, secrets, credentials)
+.env
+.env.local
+.env.*.local
+.env.production
+.env.development
+.env.test
+*.env
+
+# Google OAuth & API Credentials
+credentials.json
+token.json
+*credentials*.json
+*token*.json
+service-account*.json
+client_secret*.json
+
+# API Keys and Secrets
+*.key
+*.pem
+*.p12
+*.pfx
+*.secret
+secrets/
+.secrets/
+
+# ============================================================================
+# PYTHON
+# ============================================================================
+
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+cover/
+
+# Translations
+*.mo
+*.pot
+
+# Django stuff:
+*.log
+local_settings.py
+db.sqlite3
+db.sqlite3-journal
+
+# Flask stuff:
+instance/
+.webassets-cache
+
+# Scrapy stuff:
+.scrapy
+
+# Sphinx documentation
+docs/_build/
+
+# PyBuilder
+.pybuilder/
+target/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# IPython
+profile_default/
+ipython_config.py
+
+# pyenv
+.python-version
+
+# pipenv
+Pipfile.lock
+
+# poetry
+poetry.lock
+
+# PEP 582
+__pypackages__/
+
+# Celery stuff
+celerybeat-schedule
+celerybeat.pid
+
+# SageMath parsed files
+*.sage.py
+
+# ============================================================================
+# VIRTUAL ENVIRONMENTS
+# ============================================================================
+
+venv/
+env/
+ENV/
+.venv
+.virtualenv
+virtualenv/
+env.bak/
+venv.bak/
+
+# ============================================================================
+# DATABASE FILES
+# ============================================================================
+
+# SQLite databases
+*.db
+*.sqlite
+*.sqlite3
+*.db-shm
+*.db-wal
+
+# Database dumps
+*.sql
+*.dump
+
+# ============================================================================
+# IDE & EDITOR FILES
+# ============================================================================
+
+# VSCode
+.vscode/
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+*.code-workspace
+
+# PyCharm / IntelliJ IDEA
+.idea/
+*.iml
+*.iws
+
+# Sublime Text
+*.sublime-project
+*.sublime-workspace
+
+# Vim
+*.swp
+*.swo
+*~
+.*.sw[a-z]
+*.un~
+Session.vim
+.netrwhist
+
+# Emacs
+*~
+\#*\#
+.\#*
+.projectile
+
+# ============================================================================
+# OPERATING SYSTEM FILES
+# ============================================================================
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.DocumentRevisions-V100
+.fseventsd
+.Spotlight-V100
+.TemporaryItems
+.Trashes
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
+
+# Windows
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+*.stackdump
+[Dd]esktop.ini
+$RECYCLE.BIN/
+*.cab
+*.msi
+*.msix
+*.msm
+*.msp
+*.lnk
+
+# Linux
+*~
+
+# ============================================================================
+# LOGS & TEMPORARY FILES
+# ============================================================================
+
+# Log files
+*.log
+logs/
+*.log.*
+log/
+
+# Temp files
+tmp/
+temp/
+*.tmp
+*.temp
+*.bak
+*.backup
+*.old
+*.orig
+
+# ============================================================================
+# PROJECT SPECIFIC
+# ============================================================================
+
+# Generated reports
+data/reports/*.md
+data/reports/*.pdf
+data/reports/*.html
+data/reports/
+
+# Backup files
+backups/
+*.backup
+
+# Data files that might contain sensitive information
+data/*.csv
+data/*.json
+data/*.xlsx
+data/*.xls
+
+# Cache directories
+.cache/
+cache/
+
+# Node modules (if any frontend dependencies)
+node_modules/
+
+# ============================================================================
+# VERSION CONTROL & CI/CD
+# ============================================================================
+
+# Git
+*.orig
+*.rej
+
+# GitHub
+.github/workflows/secrets.yml
+
+# ============================================================================
+# DOCUMENTATION (Optional - uncomment if you want to exclude)
+# ============================================================================
+
+# Uncomment if you don't want to commit generated documentation
+# docs/build/
+# site/
