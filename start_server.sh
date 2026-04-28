@@ -1,12 +1,16 @@
-#!/bin/bash
-# Start the Autonomous Workflow Agent server on localhost:8000
+#!/usr/bin/env bash
+# Autonomous Workflow Agent — CLI launcher
+# For macOS users: double-click Start_App.command instead.
+# This script delegates to autonomous_workflow_agent/scripts/start_backend.sh
+# which handles service checks, DB init, and uvicorn startup.
 
-# Kill any existing server on port 8000
-lsof -ti:8000 | xargs kill -9 2>/dev/null || true
+set -euo pipefail
 
-# Open the browser after a brief delay
-(sleep 2 && open "http://127.0.0.1:8000") &
+ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
+export PYTHONPATH="$ROOT_DIR"
 
-# Start the server
-cd "$(dirname "$0")"
-python -m uvicorn autonomous_workflow_agent.app.main:app --reload --host 127.0.0.1 --port 8000
+# Open browser after 4 seconds (macOS only; silently skipped on Linux)
+(sleep 4 && open "http://127.0.0.1:8001" 2>/dev/null) &
+
+cd "$ROOT_DIR/autonomous_workflow_agent"
+exec ./scripts/start_backend.sh

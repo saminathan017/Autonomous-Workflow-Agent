@@ -1,51 +1,49 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 """
-OAuth Authentication Helper Script
-
-Run this script to authenticate with Google and generate token.json.
-This must be done before running workflows that access Gmail or Google Sheets.
+Google OAuth authentication helper.
+Run once before starting the server to generate token.json.
 """
 import sys
 from pathlib import Path
 
-# Add project to path
-project_root = Path(__file__).parent
-sys.path.insert(0, str(project_root))
+sys.path.insert(0, str(Path(__file__).parent))
 
 from autonomous_workflow_agent.app.auth.google_oauth import get_auth_manager
-from autonomous_workflow_agent.app.utils.logging import setup_logging, get_logger
+from autonomous_workflow_agent.app.utils.logging import configure_logging
 
-setup_logging()
-logger = get_logger(__name__)
+configure_logging("INFO")
 
-def main():
-    """Run OAuth authentication flow."""
-    print("=" * 60)
-    print("Google OAuth Authentication")
-    print("=" * 60)
+
+def main() -> int:
     print()
-    print("This will open your browser to authenticate with Google.")
-    print("Please sign in and grant the requested permissions.")
+    print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+    print("  Google OAuth Authentication")
+    print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
     print()
-    
-    auth_manager = get_auth_manager()
-    
-    if auth_manager.authenticate():
+    print("Your browser will open to authenticate with Google.")
+    print("Grant both Gmail (read-only) and Sheets permissions.")
+    print()
+
+    auth = get_auth_manager()
+    if auth.authenticate():
         print()
         print("✓ Authentication successful!")
-        print(f"✓ Token saved to: {auth_manager.token_path}")
+        print(f"✓ Token saved → {auth.token_path}")
         print()
-        print("You can now run workflows that access Gmail and Google Sheets.")
+        print("You can now start the server:")
+        print("  Double-click Start_App.command")
+        print("  — or —")
+        print("  cd autonomous_workflow_agent")
+        print("  uvicorn autonomous_workflow_agent.app.main:app --host 0.0.0.0 --port 8001")
         return 0
-    else:
-        print()
-        print("✗ Authentication failed!")
-        print()
-        print("Please check:")
-        print("1. credentials.json exists in the project root")
-        print("2. Your Google Cloud project is properly configured")
-        print("3. Gmail and Sheets APIs are enabled")
-        return 1
+
+    print()
+    print("✗ Authentication failed. Check:")
+    print("  1. credentials.json exists in autonomous_workflow_agent/")
+    print("  2. Gmail API and Sheets API are enabled in Google Cloud Console")
+    print("  3. OAuth consent screen is configured")
+    return 1
+
 
 if __name__ == "__main__":
     sys.exit(main())

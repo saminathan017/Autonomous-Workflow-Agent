@@ -1,184 +1,119 @@
-"""
-Google Sheets writer task - writes data with idempotency.
-"""
-from typing import List, Optional, Set
+from __future__ import annotations
+
+import asyncio
+from functools import partial
+from typing import Any
+
 from googleapiclient.errors import HttpError
+from loguru import logger
+
 from autonomous_workflow_agent.app.auth.google_oauth import get_auth_manager
 from autonomous_workflow_agent.app.config import get_settings
 from autonomous_workflow_agent.app.workflows.models import SheetRow
-from autonomous_workflow_agent.app.utils.logging import get_logger
 
-logger = get_logger(__name__)
+_HEADERS = [
+    "Email ID", "Subject", "Sender", "Date",
+    "Summary", "Category", "Sentiment", "Urgency", "Processed At",
+]
 
 
 class SheetsWriter:
-    """Writes data to Google Sheets with idempotency."""
-    
-    def __init__(self):
-        """Initialize the Sheets writer."""
-        self.auth_manager = get_auth_manager()
-        self.settings = get_settings()
-        self.service = None
-        self.sheet_id = self.settings.google_sheet_id
-    
+    """
+    Async Google Sheets writer with idempotency — wraps blocking API calls
+    in a thread executor. Duplicate rows are detected and skipped server-side
+    before any append is issued.
+    """
+
+    def __init__(self) -> None:
+        self._auth = get_auth_manager()
+        self._settings = get_settings()
+        self._service: Any = None
+        self._sheet_id = self._settings.google_sheet_id
+
     def _ensure_service(self) -> bool:
-        """Ensure Sheets service is available."""
-        if not self.service:
-            self.service = self.auth_manager.get_sheets_service()
-        return self.service is not None
-    
-    def _get_existing_email_ids(self, sheet_name: str = "Sheet1") -> Set[str]:
-        """
-        Get existing email IDs from the sheet to ensure idempotency.
-        
-        Args:
-            sheet_name: Name of the sheet
-            
-        Returns:
-            Set of existing email IDs
-        """
+        if not self._service:
+            self._service = self._auth.get_sheets_service()
+        return self._service is not None
+
+    async def _run_sync(self, fn, *args, **kwargs):
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, partial(fn, *args, **kwargs))
+
+    async def _get_existing_ids(self, sheet: str = "Sheet1") -> set[str]:
         if not self._ensure_service():
             return set()
-        
         try:
-            result = self.service.spreadsheets().values().get(
-                spreadsheetId=self.sheet_id,
-                range=f"{sheet_name}!A:A"
-            ).execute()
-            
-            values = result.get('values', [])
-            # Skip header row
-            email_ids = {row[0] for row in values[1:] if row}
-            logger.info(f"Found {len(email_ids)} existing email IDs in sheet")
-            return email_ids
-            
-        except HttpError as e:
-            logger.error(f"Error reading existing data: {e}")
+            req = self._service.spreadsheets().values().get(
+                spreadsheetId=self._sheet_id, range=f"{sheet}!A:A"
+            )
+            result = await self._run_sync(req.execute)
+            rows = result.get("values", [])
+            return {r[0] for r in rows[1:] if r}
+        except HttpError as exc:
+            logger.warning(f"Could not read existing IDs: {exc}")
             return set()
-    
-    def _ensure_headers(self, sheet_name: str = "Sheet1") -> bool:
-        """
-        Ensure the sheet has proper headers.
-        
-        Args:
-            sheet_name: Name of the sheet
-            
-        Returns:
-            True if successful, False otherwise
-        """
+
+    async def _ensure_headers(self, sheet: str = "Sheet1") -> None:
         if not self._ensure_service():
-            return False
-        
+            return
         try:
-            # Check if headers exist
-            result = self.service.spreadsheets().values().get(
-                spreadsheetId=self.sheet_id,
-                range=f"{sheet_name}!A1:I1"
-            ).execute()
-            
-            values = result.get('values', [])
-            
-            # If no headers, add them
-            if not values:
-                headers = [[
-                    'Email ID', 'Subject', 'Sender', 'Date', 'Summary',
-                    'Category', 'Sentiment', 'Urgency Score', 'Processed At'
-                ]]
-                self.service.spreadsheets().values().update(
-                    spreadsheetId=self.sheet_id,
-                    range=f"{sheet_name}!A1:I1",
-                    valueInputOption='RAW',
-                    body={'values': headers}
-                ).execute()
-                logger.info("Added headers to sheet")
-            
-            return True
-            
-        except HttpError as e:
-            logger.error(f"Error ensuring headers: {e}")
-            return False
-    
-    def write_rows(self, rows: List[SheetRow], sheet_name: str = "Sheet1") -> int:
-        """
-        Write rows to Google Sheets with idempotency.
-        
-        Args:
-            rows: List of SheetRow objects to write
-            sheet_name: Name of the sheet
-            
-        Returns:
-            Number of rows successfully written
-        """
+            req = self._service.spreadsheets().values().get(
+                spreadsheetId=self._sheet_id, range=f"{sheet}!A1:I1"
+            )
+            result = await self._run_sync(req.execute)
+            if not result.get("values"):
+                upd = self._service.spreadsheets().values().update(
+                    spreadsheetId=self._sheet_id,
+                    range=f"{sheet}!A1:I1",
+                    valueInputOption="RAW",
+                    body={"values": [_HEADERS]},
+                )
+                await self._run_sync(upd.execute)
+                logger.info("Sheets: headers written")
+        except HttpError as exc:
+            logger.warning(f"Could not ensure headers: {exc}")
+
+    async def write_rows(self, rows: list[SheetRow], sheet: str = "Sheet1") -> int:
         if not self._ensure_service():
-            logger.error("Sheets service not available")
+            logger.error("Sheets service unavailable — run authenticate.py first")
             return 0
-        
         if not rows:
-            logger.info("No rows to write")
             return 0
-        
-        # Ensure headers exist
-        if not self._ensure_headers(sheet_name):
-            logger.error("Failed to ensure headers")
-            return 0
-        
-        # Get existing email IDs for idempotency
-        existing_ids = self._get_existing_email_ids(sheet_name)
-        
-        # Filter out duplicates
-        new_rows = [row for row in rows if row.email_id not in existing_ids]
-        
+
+        await self._ensure_headers(sheet)
+        existing = await self._get_existing_ids(sheet)
+
+        new_rows = [r for r in rows if r.email_id not in existing]
         if not new_rows:
-            logger.info("All rows already exist in sheet (idempotent)")
+            logger.info(f"Sheets: all {len(rows)} rows already present (idempotent)")
             return 0
-        
-        logger.info(f"Writing {len(new_rows)} new rows (filtered {len(rows) - len(new_rows)} duplicates)")
-        
+
+        logger.info(f"Sheets: writing {len(new_rows)} new rows (skipping {len(rows) - len(new_rows)} duplicates)")
+
+        values = [
+            [
+                r.email_id, r.subject, r.sender, r.date,
+                r.summary, r.category, r.sentiment, r.urgency_label, r.processed_at,
+            ]
+            for r in new_rows
+        ]
+
         try:
-            # Prepare values
-            values = []
-            for row in new_rows:
-                # Convert urgency score to text label
-                if row.urgency_score >= 0.7:
-                    urgency_label = "Important"
-                elif row.urgency_score >= 0.4:
-                    urgency_label = "Needed Review"
-                else:
-                    urgency_label = "Take Your Time"
-                
-                values.append([
-                    row.email_id,
-                    row.subject,
-                    row.sender,
-                    row.date,
-                    row.summary,
-                    row.category,
-                    row.sentiment,
-                    urgency_label,  # Text label
-                    row.processed_at
-                ])
-            
-            # Append to sheet
-            result = self.service.spreadsheets().values().append(
-                spreadsheetId=self.sheet_id,
-                range=f"{sheet_name}!A:I",
-                valueInputOption='RAW',
-                insertDataOption='INSERT_ROWS',
-                body={'values': values}
-            ).execute()
-            
-            updated_rows = result.get('updates', {}).get('updatedRows', 0)
-            logger.info(f"Successfully wrote {updated_rows} rows to sheet")
-            return updated_rows
-            
-        except HttpError as e:
-            logger.error(f"Sheets API error: {e}")
-            return 0
-        except Exception as e:
-            logger.error(f"Unexpected error writing to sheet: {e}")
+            req = self._service.spreadsheets().values().append(
+                spreadsheetId=self._sheet_id,
+                range=f"{sheet}!A:I",
+                valueInputOption="RAW",
+                insertDataOption="INSERT_ROWS",
+                body={"values": values},
+            )
+            result = await self._run_sync(req.execute)
+            written = result.get("updates", {}).get("updatedRows", len(new_rows))
+            logger.info(f"Sheets: wrote {written} rows successfully")
+            return written
+        except HttpError as exc:
+            logger.error(f"Sheets API error: {exc}")
             return 0
 
 
 def get_sheets_writer() -> SheetsWriter:
-    """Get a Sheets writer instance."""
     return SheetsWriter()

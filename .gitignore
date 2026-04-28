@@ -233,9 +233,10 @@ $RECYCLE.BIN/
 
 # Log files
 *.log
-logs/
 *.log.*
 log/
+# Note: data/logs/ is handled in autonomous_workflow_agent/.gitignore
+# to allow .gitkeep to be tracked
 
 # Temp files
 tmp/
@@ -252,10 +253,8 @@ temp/
 # ============================================================================
 
 # Generated reports
-data/reports/*.md
-data/reports/*.pdf
-data/reports/*.html
-data/reports/
+# Note: data/reports/ contents are handled in autonomous_workflow_agent/.gitignore
+# to allow .gitkeep to be tracked
 
 # Backup files
 backups/

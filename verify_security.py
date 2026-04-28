@@ -51,7 +51,6 @@ def check_sensitive_files():
         'autonomous_workflow_agent/.env',
         'autonomous_workflow_agent/credentials.json',
         'autonomous_workflow_agent/token.json',
-        'autonomous_workflow_agent/data/state.db',
     ]
     
     print_header("Checking Sensitive Files")

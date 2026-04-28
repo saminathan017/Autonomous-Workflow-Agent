@@ -1,259 +1,288 @@
-"""
-Workflow engine - orchestrates task execution with retries and error handling.
-"""
-import time
+from __future__ import annotations
+
+import asyncio
 import uuid
-from datetime import datetime
-from typing import List, Optional
+from datetime import datetime, timezone
+from typing import Any
+
+from loguru import logger
+
+from autonomous_workflow_agent.app.config import get_settings
+from autonomous_workflow_agent.app.workflows.event_bus import publish_event
 from autonomous_workflow_agent.app.workflows.models import (
-    WorkflowRun, WorkflowStatus, StepLog, StepStatus,
-    EmailData, SheetRow
+    EmailData,
+    SheetRow,
+    StepLog,
+    StepStatus,
+    UrgencyLabel,
+    WorkflowRun,
+    WorkflowStatus,
 )
 from autonomous_workflow_agent.app.workflows.state_store import get_state_store
 from autonomous_workflow_agent.app.workflows.tasks.gmail_reader import get_gmail_reader
-from autonomous_workflow_agent.app.workflows.tasks.sheets_writer import get_sheets_writer
 from autonomous_workflow_agent.app.workflows.tasks.report_builder import get_report_builder
-from autonomous_workflow_agent.app.workflows.analytics import get_analytics_store
-from autonomous_workflow_agent.app.config import get_settings
-from autonomous_workflow_agent.app.utils.logging import get_logger
+from autonomous_workflow_agent.app.workflows.tasks.sheets_writer import get_sheets_writer
 
-logger = get_logger(__name__)
+
+def _now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _make_sheet_rows(emails: list[EmailData]) -> list[SheetRow]:
+    rows: list[SheetRow] = []
+    ts = _now().strftime("%Y-%m-%d %H:%M:%S")
+    for email in emails:
+        rows.append(
+            SheetRow(
+                email_id=email.message_id,
+                subject=email.subject,
+                sender=email.sender,
+                date=email.date,
+                summary=email.snippet[:200],
+                category=email.classification.category.value
+                if email.classification
+                else "GENERAL",
+                sentiment=email.sentiment.sentiment.value
+                if email.sentiment
+                else "NEUTRAL",
+                urgency_label=email.sentiment.urgency_label.value
+                if email.sentiment
+                else UrgencyLabel.LOW.value,
+                processed_at=ts,
+            )
+        )
+    return rows
 
 
 class WorkflowEngine:
-    """Orchestrates workflow execution with deterministic steps."""
-    
-    def __init__(self):
-        """Initialize the workflow engine."""
-        self.settings = get_settings()
-        self.state_store = get_state_store()
-        self.analytics_store = get_analytics_store()
-        self.gmail_reader = get_gmail_reader()
-        self.sheets_writer = get_sheets_writer()
-        self.report_builder = get_report_builder()
-    
-    def _execute_step_with_retry(
+    """
+    Async workflow orchestrator with Redis pub/sub WebSocket event bus,
+    retry logic, graceful degradation, and AI enrichment steps.
+
+    Events are published to Redis so any server worker process can receive
+    them — enabling true multi-process / multi-worker deployments.
+    """
+
+    def __init__(self) -> None:
+        self._settings = get_settings()
+        self._store = get_state_store()
+
+    # ── pub/sub ───────────────────────────────────────────────────────────────
+
+    def _emit(self, run_id: str, event: dict[str, Any]) -> None:
+        """Fire-and-forget Redis publish — never blocks the workflow step."""
+        asyncio.create_task(publish_event(run_id, event))
+
+    # ── step runner ───────────────────────────────────────────────────────────
+
+    async def _run_step(
         self,
         run_id: str,
         step_name: str,
-        step_func,
-        *args,
-        **kwargs
-    ) -> tuple[bool, Optional[any], Optional[str]]:
-        """
-        Execute a step with retry logic.
-        
-        Args:
-            run_id: Workflow run ID
-            step_name: Name of the step
-            step_func: Function to execute
-            *args: Positional arguments for step_func
-            **kwargs: Keyword arguments for step_func
-            
-        Returns:
-            Tuple of (success, result, error_message)
-        """
-        max_retries = self.settings.workflow_max_retries
-        retry_delay = self.settings.workflow_retry_delay_seconds
-        
+        coro,
+        *,
+        critical: bool = True,
+    ) -> tuple[bool, Any]:
+        max_retries = self._settings.workflow_max_retries
+        delay = self._settings.workflow_retry_delay_seconds
+
+        self._emit(run_id, {"type": "step_start", "step": step_name})
+
         for attempt in range(max_retries + 1):
-            step_log = StepLog(
+            step = StepLog(
                 step_name=step_name,
                 status=StepStatus.RUNNING,
-                started_at=datetime.now(),
-                retry_count=attempt
+                started_at=_now(),
+                retry_count=attempt,
             )
-            
             try:
-                logger.info(f"Executing step '{step_name}' (attempt {attempt + 1}/{max_retries + 1})")
-                result = step_func(*args, **kwargs)
-                
-                step_log.status = StepStatus.COMPLETED
-                step_log.completed_at = datetime.now()
-                self.state_store.add_step_log(run_id, step_log)
-                
-                logger.info(f"Step '{step_name}' completed successfully")
-                return True, result, None
-                
-            except Exception as e:
-                error_msg = str(e)
-                logger.error(f"Step '{step_name}' failed (attempt {attempt + 1}): {error_msg}")
-                
+                result = await coro()
+                step.status = StepStatus.COMPLETED
+                step.completed_at = _now()
+                await self._store.add_step_log(run_id, step)
+                self._emit(
+                    run_id, {"type": "step_done", "step": step_name, "success": True}
+                )
+                return True, result
+            except Exception as exc:
+                err = str(exc)
+                logger.warning(f"Step '{step_name}' attempt {attempt + 1} failed: {err}")
                 if attempt < max_retries:
-                    logger.info(f"Retrying in {retry_delay} seconds...")
-                    time.sleep(retry_delay)
+                    await asyncio.sleep(delay * (2**attempt))
                 else:
-                    step_log.status = StepStatus.FAILED
-                    step_log.completed_at = datetime.now()
-                    step_log.error_message = error_msg
-                    self.state_store.add_step_log(run_id, step_log)
-                    
-                    return False, None, error_msg
-        
-        return False, None, "Max retries exceeded"
-    
-    def execute_workflow(
+                    step.status = StepStatus.FAILED
+                    step.completed_at = _now()
+                    step.error_message = err
+                    await self._store.add_step_log(run_id, step)
+                    self._emit(
+                        run_id,
+                        {"type": "step_done", "step": step_name, "success": False, "error": err},
+                    )
+                    if critical:
+                        raise
+                    return False, None
+
+        return False, None
+
+    # ── main workflow ─────────────────────────────────────────────────────────
+
+    async def execute_workflow(
         self,
         max_emails: int = 10,
-        generate_report: bool = True
+        generate_report: bool = True,
+        run_id: str | None = None,
     ) -> WorkflowRun:
-        """
-        Execute the complete workflow.
-        
-        Args:
-            max_emails: Maximum number of emails to process
-            generate_report: Whether to generate AI report
-            
-        Returns:
-            WorkflowRun object with execution results
-        """
-        # Create workflow run
-        run_id = str(uuid.uuid4())
-        run = WorkflowRun(
-            run_id=run_id,
-            status=WorkflowStatus.RUNNING,
-            started_at=datetime.now()
-        )
-        
-        self.state_store.create_run(run)
-        logger.info(f"Started workflow run: {run_id}")
-        
+        if run_id is None:
+            run_id = str(uuid.uuid4())
+
+        run = WorkflowRun(run_id=run_id, status=WorkflowStatus.RUNNING, started_at=_now())
+        await self._store.create_run(run)
+        self._emit(run_id, {"type": "workflow_start", "run_id": run_id})
+        logger.info(f"Workflow {run_id} started")
+
         try:
-            # Step 1: Fetch emails from Gmail
-            success, emails, error = self._execute_step_with_retry(
+            # ── Step 1: Fetch & analyse emails (critical) ─────────────────────
+            gmail = get_gmail_reader()
+            _, emails = await self._run_step(
                 run_id,
                 "fetch_emails",
-                self.gmail_reader.fetch_emails,
-                max_results=max_emails
+                lambda: gmail.fetch_emails(max_results=max_emails),
+                critical=True,
             )
-            
-            if not success or not emails:
-                run.status = WorkflowStatus.FAILED
-                run.error_message = error or "No emails fetched"
-                run.completed_at = datetime.now()
-                self.state_store.update_run(
-                    run_id,
-                    status=run.status,
-                    error_message=run.error_message,
-                    completed_at=run.completed_at
-                )
-                return run
-            
+            emails = emails or []
             run.emails_processed = len(emails)
-            logger.info(f"Fetched {len(emails)} emails")
-            
+
             # Cache classifications for analytics
             for email in emails:
                 if email.classification and email.sentiment:
                     try:
-                        self.analytics_store.cache_classification(
+                        await self._store.cache_classification(
                             email_id=email.message_id,
                             category=email.classification.category.value,
                             sentiment=email.sentiment.sentiment.value,
                             urgency_score=email.sentiment.urgency_score,
-                            confidence=email.classification.confidence
+                            confidence=email.classification.confidence,
                         )
-                    except Exception as e:
-                        logger.warning(f"Failed to cache classification: {e}")
-            
-            # Step 2: Write to Google Sheets
-            sheet_rows = self._prepare_sheet_rows(emails)
-            success, rows_written, error = self._execute_step_with_retry(
+                    except Exception:
+                        pass
+
+            self._emit(run_id, {"type": "emails_fetched", "count": len(emails)})
+
+            # ── Step 2: Store emails for browsing (non-critical) ──────────────
+            async def _store_emails():
+                for email in emails:
+                    await self._store.store_email(email, run_id)
+                return len(emails)
+
+            await self._run_step(run_id, "store_emails", _store_emails, critical=False)
+
+            # ── Step 3: Write to Google Sheets (non-critical) ─────────────────
+            sheets = get_sheets_writer()
+            sheet_rows = _make_sheet_rows(emails)
+            await self._run_step(
                 run_id,
                 "write_to_sheets",
-                self.sheets_writer.write_rows,
-                sheet_rows
+                lambda: sheets.write_rows(sheet_rows),
+                critical=False,
             )
-            
-            if not success:
-                logger.warning(f"Failed to write to sheets: {error}")
-                # Don't fail the whole workflow, continue to report generation
-            else:
-                logger.info(f"Wrote {rows_written} rows to Google Sheets")
-            
-            # Step 3: Generate AI report (if requested)
-            if generate_report:
-                success, report_data, error = self._execute_step_with_retry(
+
+            # ── Step 4: Generate AI draft replies (non-critical) ──────────────
+            user_settings = await self._store.get_settings()
+            if user_settings.auto_draft_enabled and emails:
+                from autonomous_workflow_agent.app.ai.draft_generator import generate_draft_reply
+
+                async def _generate_drafts():
+                    candidates = [
+                        e for e in emails
+                        if e.sentiment and (
+                            e.sentiment.requires_human
+                            or (e.classification and e.classification.category.value
+                                in ("URGENT", "CUSTOMER_INQUIRY", "INVOICE"))
+                        )
+                    ]
+                    drafts_saved = 0
+                    for email in candidates[:5]:  # cap at 5 per run
+                        draft = await generate_draft_reply(email, run_id)
+                        if draft:
+                            await self._store.save_draft(draft)
+                            drafts_saved += 1
+                    return drafts_saved
+
+                ok, drafts_count = await self._run_step(
+                    run_id, "generate_drafts", _generate_drafts, critical=False
+                )
+                if ok and drafts_count:
+                    self._emit(run_id, {"type": "drafts_ready", "count": drafts_count})
+
+            # ── Step 5: Extract action items (non-critical) ───────────────────
+            if user_settings.action_items_enabled and emails:
+                from autonomous_workflow_agent.app.ai.action_extractor import extract_action_items
+
+                async def _extract_actions():
+                    all_items = []
+                    tasks = [extract_action_items(e, run_id) for e in emails]
+                    results = await asyncio.gather(*tasks, return_exceptions=True)
+                    for result in results:
+                        if isinstance(result, list):
+                            all_items.extend(result)
+                    await self._store.save_action_items(all_items)
+                    return len(all_items)
+
+                ok, actions_count = await self._run_step(
+                    run_id, "extract_actions", _extract_actions, critical=False
+                )
+                if ok and actions_count:
+                    self._emit(run_id, {"type": "actions_extracted", "count": actions_count})
+
+            # ── Step 6: Generate AI report (non-critical) ─────────────────────
+            if generate_report and emails:
+                builder = get_report_builder()
+                ok, report_data = await self._run_step(
                     run_id,
                     "generate_report",
-                    self.report_builder.build_report,
-                    emails
+                    lambda: builder.build_report(emails),
+                    critical=False,
                 )
-                
-                if success and report_data:
-                    # Save report
-                    report_path = self.report_builder.save_report(report_data)
+                if ok and report_data:
+                    report_path = builder.save_report(report_data)
                     run.report_path = str(report_path)
-                    logger.info(f"Generated report: {report_path}")
-                else:
-                    logger.warning(f"Failed to generate report: {error}")
-            
-            # Workflow completed successfully
+                    self._emit(
+                        run_id,
+                        {"type": "report_ready", "path": str(report_path)},
+                    )
+
             run.status = WorkflowStatus.COMPLETED
-            run.completed_at = datetime.now()
-            self.state_store.update_run(
-                run_id,
-                status=run.status,
-                completed_at=run.completed_at,
-                emails_processed=run.emails_processed,
-                report_path=run.report_path
-            )
-            
-            logger.info(f"Workflow run {run_id} completed successfully")
-            return run
-            
-        except Exception as e:
-            logger.error(f"Workflow execution failed: {e}")
+            run.completed_at = _now()
+
+        except Exception as exc:
+            logger.error(f"Workflow {run_id} failed: {exc}")
             run.status = WorkflowStatus.FAILED
-            run.error_message = str(e)
-            run.completed_at = datetime.now()
-            self.state_store.update_run(
-                run_id,
-                status=run.status,
-                error_message=run.error_message,
-                completed_at=run.completed_at
-            )
-            return run
-    
-    def _prepare_sheet_rows(self, emails: List[EmailData]) -> List[SheetRow]:
-        """
-        Prepare sheet rows from email data.
-        
-        Args:
-            emails: List of EmailData objects
-            
-        Returns:
-            List of SheetRow objects
-        """
-        rows = []
-        for email in emails:
-            # Extract classification and sentiment data
-            category = "general"
-            sentiment = "neutral"
-            urgency_score = 0.0
-            
-            if email.classification:
-                category = email.classification.category.value
-            
-            if email.sentiment:
-                sentiment = email.sentiment.sentiment.value
-                urgency_score = email.sentiment.urgency_score
-            
-            row = SheetRow(
-                email_id=email.message_id,
-                subject=email.subject,
-                sender=email.sender,
-                date=email.date.strftime("%Y-%m-%d %H:%M:%S"),
-                summary=email.snippet[:200] if email.snippet else "",
-                category=category,
-                sentiment=sentiment,
-                urgency_score=urgency_score,
-                processed_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            )
-            rows.append(row)
-        return rows
+            run.error_message = str(exc)
+            run.completed_at = _now()
+
+        await self._store.update_run(run)
+        self._emit(
+            run_id,
+            {
+                "type": "workflow_complete",
+                "status": run.status.value,
+                "emails_processed": run.emails_processed,
+                "report_path": run.report_path,
+            },
+        )
+        logger.info(
+            f"Workflow {run_id} → {run.status.value} ({run.emails_processed} emails)"
+        )
+        return run
+
+
+# ── singleton ─────────────────────────────────────────────────────────────────
+
+_engine: WorkflowEngine | None = None
 
 
 def get_workflow_engine() -> WorkflowEngine:
-    """Get a workflow engine instance."""
-    return WorkflowEngine()
+    global _engine
+    if _engine is None:
+        _engine = WorkflowEngine()
+    return _engine

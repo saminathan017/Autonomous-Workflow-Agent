@@ -1,16 +1,13 @@
 """
 Google OAuth 2.0 flow and API service builders.
 """
-import os
-import json
-from pathlib import Path
 from typing import Optional
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
-from autonomous_workflow_agent.app.config import get_settings, get_project_root
+from autonomous_workflow_agent.app.config import get_project_root, get_settings
 from autonomous_workflow_agent.app.utils.logging import get_logger
 
 logger = get_logger(__name__)

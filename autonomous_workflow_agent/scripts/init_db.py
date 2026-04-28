@@ -1,41 +1,49 @@
 #!/usr/bin/env python3
+"""Database initialisation — safe to run multiple times (idempotent).
+
+Usage:
+    cd autonomous_workflow_agent
+    python scripts/init_db.py
 """
-Database initialization script.
-Creates the SQLite database and schema.
-"""
+import asyncio
 import sys
 from pathlib import Path
 
-# Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+from autonomous_workflow_agent.app.config import get_settings
+from autonomous_workflow_agent.app.utils.logging import configure_logging
 from autonomous_workflow_agent.app.workflows.state_store import StateStore
-from autonomous_workflow_agent.app.config import get_settings, get_project_root
-from autonomous_workflow_agent.app.utils.logging import setup_logging, get_logger
 
-# Setup logging
-setup_logging(log_level="INFO")
-logger = get_logger(__name__)
+configure_logging("INFO")
 
 
-def main():
-    """Initialize the database."""
-    logger.info("Initializing database...")
-    
+async def main() -> int:
     settings = get_settings()
-    db_path = get_project_root() / settings.database_path
-    
-    logger.info(f"Database path: {db_path}")
-    
-    # Create state store (this will initialize the database)
-    state_store = StateStore(db_path=db_path)
-    
-    logger.info("✓ Database initialized successfully!")
-    logger.info(f"  Location: {db_path}")
-    logger.info(f"  Tables: workflow_runs, step_logs")
-    
-    return 0
+    print(f"Connecting to PostgreSQL: {settings.database_url!r} ...")
+    store = StateStore()
+    try:
+        await store.initialize()
+        print("PostgreSQL ready — all tables created/verified.")
+        print(
+            "Tables: workflow_runs, step_logs, analytics, email_classifications, "
+            "processed_emails, draft_replies, action_items, schedule_config, "
+            "user_settings, follow_ups, email_translations, briefing_cache"
+        )
+        return 0
+    except Exception as exc:
+        print(f"ERROR: {exc}")
+        print(
+            "\nMake sure PostgreSQL is running and DATABASE_URL in .env is correct.\n"
+            "Quick setup:\n"
+            "  brew install postgresql@16\n"
+            "  brew services start postgresql@16\n"
+            "  createdb workflow_agent\n"
+        )
+        return 1
+    finally:
+        await store.close()
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(asyncio.run(main()))

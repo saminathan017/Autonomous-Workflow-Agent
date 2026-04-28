@@ -1,149 +1,238 @@
-"""
-Pydantic models for workflow data structures.
-"""
-from datetime import datetime
-from enum import Enum
-from typing import Optional, List, Dict, Any
-from pydantic import BaseModel, Field
+from __future__ import annotations
+
+from datetime import datetime, timezone
+from enum import StrEnum
+from typing import Any
+from uuid import uuid4
+
+from pydantic import BaseModel, ConfigDict, Field
 
 
-class EmailCategory(str, Enum):
-    """Email classification categories."""
-    URGENT = "urgent"
-    CUSTOMER_INQUIRY = "customer_inquiry"
-    INVOICE = "invoice"
-    NEWSLETTER = "newsletter"
-    SPAM = "spam"
-    GENERAL = "general"
+class EmailCategory(StrEnum):
+    URGENT = "URGENT"
+    CUSTOMER_INQUIRY = "CUSTOMER_INQUIRY"
+    INVOICE = "INVOICE"
+    NEWSLETTER = "NEWSLETTER"
+    SPAM = "SPAM"
+    GENERAL = "GENERAL"
 
 
-class Sentiment(str, Enum):
-    """Email sentiment types."""
-    POSITIVE = "positive"
-    NEGATIVE = "negative"
-    NEUTRAL = "neutral"
+class Sentiment(StrEnum):
+    POSITIVE = "POSITIVE"
+    NEGATIVE = "NEGATIVE"
+    NEUTRAL = "NEUTRAL"
 
 
-class WorkflowStatus(str, Enum):
-    """Workflow execution status."""
-    PENDING = "pending"
-    RUNNING = "running"
-    COMPLETED = "completed"
-    FAILED = "failed"
+class WorkflowStatus(StrEnum):
+    PENDING = "PENDING"
+    RUNNING = "RUNNING"
+    COMPLETED = "COMPLETED"
+    FAILED = "FAILED"
 
 
-class StepStatus(str, Enum):
-    """Individual step execution status."""
-    PENDING = "pending"
-    RUNNING = "running"
-    COMPLETED = "completed"
-    FAILED = "failed"
-    SKIPPED = "skipped"
+class StepStatus(StrEnum):
+    PENDING = "PENDING"
+    RUNNING = "RUNNING"
+    COMPLETED = "COMPLETED"
+    FAILED = "FAILED"
+    SKIPPED = "SKIPPED"
 
+
+class UrgencyLabel(StrEnum):
+    IMPORTANT = "Important"
+    REVIEW = "Needed Review"
+    LOW = "Take Your Time"
+
+    @classmethod
+    def from_score(cls, score: float) -> UrgencyLabel:
+        if score >= 0.7:
+            return cls.IMPORTANT
+        if score >= 0.4:
+            return cls.REVIEW
+        return cls.LOW
+
+
+class ActionItemPriority(StrEnum):
+    HIGH = "HIGH"
+    MEDIUM = "MEDIUM"
+    LOW = "LOW"
+
+
+class ScheduleType(StrEnum):
+    DAILY = "daily"
+    INTERVAL = "interval"
+
+
+# ── Core email models ─────────────────────────────────────────────────────────
 
 class EmailClassification(BaseModel):
-    """Email classification result."""
+    model_config = ConfigDict(frozen=True)
+
     category: EmailCategory
     confidence: float = Field(ge=0.0, le=1.0)
     reasoning: str
 
 
 class SentimentAnalysis(BaseModel):
-    """Email sentiment analysis result."""
+    model_config = ConfigDict(frozen=True)
+
     sentiment: Sentiment
-    urgency_score: float = Field(ge=0.0, le=1.0, description="0=low urgency, 1=high urgency")
+    urgency_score: float = Field(ge=0.0, le=1.0)
     requires_human: bool
     confidence: float = Field(ge=0.0, le=1.0)
 
+    @property
+    def urgency_label(self) -> UrgencyLabel:
+        return UrgencyLabel.from_score(self.urgency_score)
+
 
 class EmailData(BaseModel):
-    """Structured email data."""
     message_id: str
     subject: str
     sender: str
     recipient: str
-    date: datetime
+    date: str
     body: str
     snippet: str
-    classification: Optional[EmailClassification] = None
-    sentiment: Optional[SentimentAnalysis] = None
-    
-    class Config:
-        json_encoders = {
-            datetime: lambda v: v.isoformat()
-        }
+    classification: EmailClassification | None = None
+    sentiment: SentimentAnalysis | None = None
 
 
 class SheetRow(BaseModel):
-    """Data row for Google Sheets."""
     email_id: str
     subject: str
     sender: str
     date: str
     summary: str
-    category: str = "general"
-    sentiment: str = "neutral"
-    urgency_score: float = 0.0
+    category: str = "GENERAL"
+    sentiment: str = "NEUTRAL"
+    urgency_label: str = "Take Your Time"
     processed_at: str
 
 
 class ReportData(BaseModel):
-    """AI-generated report data."""
     title: str
     summary: str
-    insights: List[str]
-    urgency_stats: Dict[str, int] = Field(default_factory=dict)
-    priority_emails: List[str] = Field(default_factory=list)
+    insights: list[str]
+    urgency_stats: dict[str, int] = Field(default_factory=dict)
+    priority_emails: list[str] = Field(default_factory=list)
     email_count: int
-    generated_at: datetime
-    
-    class Config:
-        json_encoders = {
-            datetime: lambda v: v.isoformat()
-        }
+    generated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    model_used: str = "gpt-4o-mini"
+    cached_tokens: int = 0
 
 
 class StepLog(BaseModel):
-    """Log entry for a workflow step."""
     step_name: str
-    status: StepStatus
-    started_at: Optional[datetime] = None
-    completed_at: Optional[datetime] = None
-    error_message: Optional[str] = None
+    status: StepStatus = StepStatus.PENDING
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+    error_message: str | None = None
     retry_count: int = 0
-    metadata: Dict[str, Any] = Field(default_factory=dict)
-    
-    class Config:
-        json_encoders = {
-            datetime: lambda v: v.isoformat() if v else None
-        }
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class WorkflowRun(BaseModel):
-    """Complete workflow run data."""
     run_id: str
-    status: WorkflowStatus
-    started_at: datetime
-    completed_at: Optional[datetime] = None
-    error_message: Optional[str] = None
-    steps: List[StepLog] = Field(default_factory=list)
+    status: WorkflowStatus = WorkflowStatus.PENDING
+    started_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    completed_at: datetime | None = None
+    error_message: str | None = None
+    steps: list[StepLog] = Field(default_factory=list)
     emails_processed: int = 0
-    report_path: Optional[str] = None
-    
-    class Config:
-        json_encoders = {
-            datetime: lambda v: v.isoformat() if v else None
-        }
+    report_path: str | None = None
 
 
 class WorkflowTriggerRequest(BaseModel):
-    """Request to trigger a workflow."""
-    max_emails: int = Field(default=10, ge=1, le=100, description="Maximum emails to process")
-    generate_report: bool = Field(default=True, description="Whether to generate AI report")
+    max_emails: int = Field(default=10, ge=1, le=100)
+    generate_report: bool = Field(default=True)
 
 
 class WorkflowRunResponse(BaseModel):
-    """Response after triggering a workflow."""
     run_id: str
     status: WorkflowStatus
     message: str
+    ws_url: str = ""
+
+
+# ── New feature models ────────────────────────────────────────────────────────
+
+class DraftReply(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid4()))
+    email_id: str
+    run_id: str = ""
+    subject: str = ""
+    sender: str = ""
+    draft_content: str
+    tone: str = "professional"
+    generated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class ActionItem(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid4()))
+    email_id: str
+    run_id: str = ""
+    task: str
+    priority: ActionItemPriority = ActionItemPriority.MEDIUM
+    due_date: str | None = None
+    completed: bool = False
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class ScheduleConfig(BaseModel):
+    enabled: bool = False
+    schedule_type: ScheduleType = ScheduleType.DAILY
+    interval_hours: int = Field(6, ge=1, le=168)
+    cron_hour: int = Field(9, ge=0, le=23)
+    cron_minute: int = Field(0, ge=0, le=59)
+    max_emails: int = Field(10, ge=1, le=100)
+    generate_report: bool = True
+    next_run: datetime | None = None
+    last_run: datetime | None = None
+
+
+class UserSettings(BaseModel):
+    auto_draft_enabled: bool = True
+    action_items_enabled: bool = True
+    default_max_emails: int = Field(10, ge=1, le=100)
+    default_generate_report: bool = True
+    email_query_filter: str = ""
+    notify_urgent: bool = True
+    notify_complete: bool = True
+
+
+class ProcessedEmail(BaseModel):
+    email_id: str
+    run_id: str = ""
+    subject: str
+    sender: str
+    date: str
+    body_preview: str = ""
+    category: str = "GENERAL"
+    sentiment: str = "NEUTRAL"
+    urgency_label: str = "Take Your Time"
+    urgency_score: float = 0.0
+    requires_human: bool = False
+    classification_confidence: float = 0.0
+    processed_at: str = ""
+    has_draft: bool = False
+    action_count: int = 0
+
+
+class FollowUp(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid4()))
+    email_id: str = ""
+    subject: str = ""
+    sender: str = ""
+    follow_up_date: str
+    note: str = ""
+    completed: bool = False
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class ComposeRequest(BaseModel):
+    to: str
+    intent: str
+    tone: str = "professional"
+    context: str = ""
+    thread_context: str = ""

@@ -1,61 +1,53 @@
-"""
-Centralized logging configuration for the Autonomous Workflow Agent.
-"""
-import logging
+from __future__ import annotations
+
 import sys
 from pathlib import Path
-from typing import Optional
+
+from loguru import logger
+
+_configured = False
 
 
-def setup_logging(log_level: str = "INFO", log_file: Optional[Path] = None) -> logging.Logger:
-    """
-    Configure application-wide logging.
-    
-    Args:
-        log_level: Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
-        log_file: Optional file path for log output
-        
-    Returns:
-        Configured logger instance
-    """
-    # Create logger
-    logger = logging.getLogger("autonomous_workflow_agent")
-    logger.setLevel(getattr(logging, log_level.upper()))
-    
-    # Remove existing handlers
-    logger.handlers.clear()
-    
-    # Create formatter
-    formatter = logging.Formatter(
-        fmt="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S"
+def configure_logging(log_level: str = "INFO") -> None:
+    global _configured
+    if _configured:
+        return
+
+    logger.remove()
+
+    logger.add(
+        sys.stderr,
+        format=(
+            "<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | "
+            "<level>{level: <8}</level> | "
+            "<cyan>{name}</cyan>:<cyan>{line}</cyan> — "
+            "<level>{message}</level>"
+        ),
+        level=log_level,
+        colorize=True,
+        backtrace=True,
+        diagnose=True,
     )
-    
-    # Console handler
-    console_handler = logging.StreamHandler(sys.stdout)
-    console_handler.setLevel(getattr(logging, log_level.upper()))
-    console_handler.setFormatter(formatter)
-    logger.addHandler(console_handler)
-    
-    # File handler (optional)
-    if log_file:
-        log_file.parent.mkdir(parents=True, exist_ok=True)
-        file_handler = logging.FileHandler(log_file)
-        file_handler.setLevel(getattr(logging, log_level.upper()))
-        file_handler.setFormatter(formatter)
-        logger.addHandler(file_handler)
-    
-    return logger
+
+    log_dir = Path(__file__).parent.parent.parent / "data" / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+
+    logger.add(
+        str(log_dir / "app_{time:YYYY-MM-DD}.log"),
+        rotation="00:00",
+        retention="30 days",
+        compression="gz",
+        level="DEBUG",
+        format="{time:YYYY-MM-DD HH:mm:ss.SSS} | {level: <8} | {name}:{line} — {message}",
+        backtrace=True,
+    )
+
+    _configured = True
 
 
-def get_logger(name: str) -> logging.Logger:
-    """
-    Get a logger instance for a specific module.
-    
-    Args:
-        name: Logger name (typically __name__)
-        
-    Returns:
-        Logger instance
-    """
-    return logging.getLogger(f"autonomous_workflow_agent.{name}")
+def setup_logging(log_level: str = "INFO", **_) -> None:
+    configure_logging(log_level)
+
+
+def get_logger(name: str):
+    return logger.bind(name=name)
